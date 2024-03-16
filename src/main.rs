@@ -4,6 +4,8 @@ use opencv::{
     core::{self, Size},
     highgui, imgcodecs,
     imgproc::{self, contour_area},
+    prelude::VideoCaptureTrait,
+    videoio::{self, VideoCaptureTraitConst},
 };
 
 // Detects fingers in an image for multitoch applications
@@ -11,29 +13,72 @@ fn main() {
     let project_root = project_root::get_project_root().expect("Failed to get project root");
 
     let image1_path = project_root.join("src").join("1.jpg");
-    let image2_path = project_root.join("src").join("2.jpg");
+    // let image2_path = project_root.join("src").join("2.jpg");
+    let video_path = project_root.join("src").join("mt_camera_raw.AVI");
 
-    let mut background =
+    let background =
         imgcodecs::imread(image1_path.to_str().expect("Invalid image1 path"), 1).unwrap();
-    let mut image: core::Mat =
-        imgcodecs::imread(image2_path.to_str().expect("Invalid image2 path"), 1).unwrap();
+    // let image: core::Mat = imgcodecs::imread(image2_path.to_str().expect("Invalid image2 path"), 1).unwrap();
 
-    let temp_image = image.clone();
-    imgproc::cvt_color_def(&temp_image, &mut image, imgproc::COLOR_BGR2GRAY).unwrap();
-    let temp_background = background.clone();
-    imgproc::cvt_color_def(&temp_background, &mut background, imgproc::COLOR_BGR2GRAY).unwrap();
+    video(
+        video_path.to_str().expect("Invalid video path"),
+        &background,
+    );
+}
 
-    image = prepare_image(&image, &background);
+fn video(video_path: &str, background: &core::Mat) {
+    let mut cap = videoio::VideoCapture::from_file(video_path, videoio::CAP_ANY).unwrap();
 
-    let ellipse_image = detect_fingers(&image);
+    let mut frame_counter = 0;
 
-    highgui::imshow("result", &ellipse_image).unwrap();
-    highgui::wait_key(0).unwrap();
-    highgui::destroy_all_windows().unwrap();
+    let total_frames = cap
+        .get(videoio::VideoCaptureProperties::CAP_PROP_FRAME_COUNT.into())
+        .unwrap();
+    let total_frames = total_frames as i32;
+
+    let mut gray_background = background.clone();
+    imgproc::cvt_color_def(&background, &mut gray_background, imgproc::COLOR_BGR2GRAY).unwrap();
+
+    highgui::named_window("multi-touch", highgui::WINDOW_NORMAL).unwrap();
+    highgui::resize_window("multi-touch", 720, 480).unwrap();
+
+    loop {
+        // if the last frame of the video is reached, reset the frame_counter and start again
+        if frame_counter == total_frames {
+            frame_counter = 0;
+            cap.set(videoio::CAP_PROP_POS_FRAMES, 0.0).unwrap();
+        }
+
+        let mut frame = core::Mat::default();
+        let success = cap.read(&mut frame).unwrap();
+
+        if success {
+            let mut image = frame.clone();
+
+            // My code
+
+            let temp_image = image.clone();
+            imgproc::cvt_color_def(&temp_image, &mut image, imgproc::COLOR_BGR2GRAY).unwrap();
+
+            image = prepare_image(&image, &gray_background);
+            let ellipse_image = detect_fingers(&image, &frame);
+
+            image = ellipse_image;
+            // End of my code
+
+            highgui::imshow("multi-touch", &image).unwrap();
+            let key = highgui::wait_key(50).unwrap();
+            if key == 27 {
+                // escape key
+                break;
+            }
+            frame_counter += 1;
+        }
+    }
 }
 
 // Detects the contours of the fingers in the image
-fn detect_fingers(image: &core::Mat) -> core::Mat {
+fn detect_fingers(image: &core::Mat, original_frame: &core::Mat) -> core::Mat {
     let mut contours = core::Vector::<core::Vector<core::Point>>::new();
     let mut hierarchy = core::Vector::<core::Vec4i>::new();
     imgproc::find_contours_with_hierarchy_def(
@@ -45,10 +90,11 @@ fn detect_fingers(image: &core::Mat) -> core::Mat {
     )
     .unwrap();
 
-    let mut empty_img = image.clone();
+    let empty_img = image.clone();
+    let mut temp_original_frame = original_frame.clone();
 
     if hierarchy.is_empty() {
-        panic!("No contours found");
+        return empty_img;
     }
 
     let mut idx: i32 = 0;
@@ -57,8 +103,6 @@ fn detect_fingers(image: &core::Mat) -> core::Mat {
         idx = hierarchy.get(idx.try_into().unwrap()).unwrap()[0];
 
         if contour_area(&con, false).unwrap() > 30.00 && con.len() > 4 {
-            println!("Finger detected");
-
             let ellipse = imgproc::fit_ellipse_direct(&con).unwrap();
 
             let center_32 = core::Point::new(ellipse.center.x as i32, ellipse.center.y as i32);
@@ -68,19 +112,19 @@ fn detect_fingers(image: &core::Mat) -> core::Mat {
 
             let size_i32 = Size::from((major_axis as i32, minor_axis as i32));
 
-            if major_axis > minor_axis * 3.0 {
-                println!("Ellipse is too long");
+            if major_axis > minor_axis * 3.0 || minor_axis > major_axis * 3.0 {
+                // println!("Ellipse is too long");
                 continue;
             }
 
             let ellipse_area = std::f64::consts::PI * (major_axis / 2.0) * (minor_axis / 2.0);
             if ellipse_area > 200.0 {
-                println!("Ellipse is too big");
+                // println!("Ellipse is too big");
                 continue;
             }
 
             imgproc::ellipse(
-                &mut empty_img,
+                &mut temp_original_frame,
                 center_32,
                 size_i32,
                 ellipse.angle.into(),
@@ -93,8 +137,9 @@ fn detect_fingers(image: &core::Mat) -> core::Mat {
             )
             .unwrap();
 
+            /*
             let _ = imgproc::draw_contours(
-                &mut empty_img,
+                &mut temp_original_frame,
                 &contours,
                 idx,
                 core::Scalar::new(255.0, 0.0, 0.0, 0.0),
@@ -104,9 +149,10 @@ fn detect_fingers(image: &core::Mat) -> core::Mat {
                 0,
                 core::Point::new(0, 0),
             );
+            */
         }
     }
-    empty_img
+    temp_original_frame
 }
 
 // Prepare image for finger contour detection
