@@ -40,8 +40,8 @@ fn detect_fingers(image: &core::Mat) -> core::Mat {
         &image,
         &mut contours,
         &mut hierarchy,
-        imgproc::RETR_CCOMP,
         imgproc::CHAIN_APPROX_SIMPLE,
+        imgproc::RETR_CCOMP,
     )
     .unwrap();
 
@@ -59,15 +59,13 @@ fn detect_fingers(image: &core::Mat) -> core::Mat {
         if contour_area(&con, false).unwrap() > 30.00 && con.len() > 4 {
             println!("Finger detected");
 
-            let ellipse = imgproc::fit_ellipse_direct(&con).unwrap();
+            let ellipse = imgproc::fit_ellipse(&con).unwrap();
 
             let center_32 = core::Point::new(ellipse.center.x as i32, ellipse.center.y as i32);
+            let size_i32 = core::Size::new(ellipse.size.width as i32, ellipse.size.height as i32);
 
-            let major_axis = (ellipse.size.width / 2.0) as f64;
-            let minor_axis = (ellipse.size.height / 2.0) as f64;
-
-            let size_i32 = Size::from((major_axis as i32, minor_axis as i32));
-
+            let major_axis = ellipse.size.width as f64;
+            let minor_axis = ellipse.size.height as f64;
             if major_axis > minor_axis * 3.0 {
                 println!("Ellipse is too long");
                 continue;
@@ -75,7 +73,7 @@ fn detect_fingers(image: &core::Mat) -> core::Mat {
 
             let ellipse_area = std::f64::consts::PI * (major_axis / 2.0) * (minor_axis / 2.0);
             if ellipse_area > 200.0 {
-                println!("Ellipse is too big");
+                println!("Ellipse is too small");
                 continue;
             }
 
@@ -92,18 +90,6 @@ fn detect_fingers(image: &core::Mat) -> core::Mat {
                 0,
             )
             .unwrap();
-
-            let _ = imgproc::draw_contours(
-                &mut empty_img,
-                &contours,
-                idx,
-                core::Scalar::new(255.0, 0.0, 0.0, 0.0),
-                1,
-                8,
-                &hierarchy,
-                0,
-                core::Point::new(0, 0),
-            );
         }
     }
     empty_img
@@ -114,7 +100,8 @@ fn prepare_image(image: &core::Mat, background: &core::Mat) -> core::Mat {
     // subtract background from image
     let temp_image = image.clone();
     let mut img_subtraction = image.clone();
-    //core::absdiff(&temp_image, &background, &mut img_subtraction).unwrap();
+    core::absdiff(&temp_image, &background, &mut img_subtraction).unwrap();
+    /*
     core::subtract(
         &temp_image,
         &background,
@@ -123,14 +110,14 @@ fn prepare_image(image: &core::Mat, background: &core::Mat) -> core::Mat {
         -1,
     )
     .unwrap();
-
+    */
     // first blur
     let temp_image = img_subtraction.clone();
     let mut img_blur = core::Mat::default();
     imgproc::blur(
         &temp_image,
         &mut img_blur,
-        Size::from((15, 15)),
+        Size::from((20, 20)),
         Default::default(),
         0,
     )
@@ -138,9 +125,9 @@ fn prepare_image(image: &core::Mat, background: &core::Mat) -> core::Mat {
     // subtract blur from subtraction
     let mut img_subtraction2 = core::Mat::default();
 
-    //core::absdiff(&img_subtraction, &img_blur, &mut img_subtraction2).unwrap();
+    core::absdiff(&img_subtraction, &img_blur, &mut img_subtraction2).unwrap();
 
-    core::subtract(
+    /*core::subtract(
         &img_subtraction,
         &img_blur,
         &mut img_subtraction2,
@@ -148,12 +135,13 @@ fn prepare_image(image: &core::Mat, background: &core::Mat) -> core::Mat {
         -1,
     )
     .unwrap();
+    */
     // second blur
     let mut img_blur2 = core::Mat::default();
     imgproc::blur(
         &img_subtraction2,
         &mut img_blur2,
-        Size::from((5, 5)),
+        Size::from((10, 10)),
         Default::default(),
         0,
     )
@@ -163,7 +151,7 @@ fn prepare_image(image: &core::Mat, background: &core::Mat) -> core::Mat {
     imgproc::threshold(
         &img_blur2,
         &mut img_gray,
-        15.0,
+        33.0,
         255.0,
         imgproc::THRESH_BINARY,
     )
