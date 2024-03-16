@@ -90,11 +90,10 @@ fn detect_fingers(image: &core::Mat, original_frame: &core::Mat) -> core::Mat {
     )
     .unwrap();
 
-    let empty_img = image.clone();
     let mut temp_original_frame = original_frame.clone();
 
     if hierarchy.is_empty() {
-        return empty_img;
+        return temp_original_frame;
     }
 
     let mut idx: i32 = 0;
@@ -112,14 +111,14 @@ fn detect_fingers(image: &core::Mat, original_frame: &core::Mat) -> core::Mat {
 
             let size_i32 = Size::from((major_axis as i32, minor_axis as i32));
 
-            if major_axis > minor_axis * 3.0 || minor_axis > major_axis * 3.0 {
+            if major_axis > minor_axis * 2.5 || minor_axis > major_axis * 2.5 {
                 // println!("Ellipse is too long");
                 continue;
             }
 
             let ellipse_area = std::f64::consts::PI * (major_axis / 2.0) * (minor_axis / 2.0);
-            if ellipse_area > 200.0 {
-                // println!("Ellipse is too big");
+            if !(5.0..=150.0).contains(&ellipse_area) {
+                // println!("Ellipse too big / small");
                 continue;
             }
 
@@ -176,7 +175,7 @@ fn prepare_image(image: &core::Mat, background: &core::Mat) -> core::Mat {
     imgproc::blur(
         &temp_image,
         &mut img_blur,
-        Size::from((15, 15)),
+        Size::from((20, 20)),
         Default::default(),
         0,
     )
@@ -194,22 +193,25 @@ fn prepare_image(image: &core::Mat, background: &core::Mat) -> core::Mat {
         -1,
     )
     .unwrap();
+    let img_blur2 = img_subtraction2.clone();
+    /*
     // second blur
-    let mut img_blur2 = core::Mat::default();
+    img_blur2 = core::Mat::default();
     imgproc::blur(
         &img_subtraction2,
         &mut img_blur2,
-        Size::from((5, 5)),
+        Size::from((1, 1)),
         Default::default(),
         0,
     )
     .unwrap();
+    */
     // grayscale threshold
     let mut img_gray = core::Mat::default();
     imgproc::threshold(
         &img_blur2,
         &mut img_gray,
-        15.0,
+        12.0,
         255.0,
         imgproc::THRESH_BINARY,
     )
