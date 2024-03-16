@@ -1,7 +1,10 @@
 extern crate opencv;
 
-use opencv::core::{MatTraitConst, Size};
-use opencv::{core, highgui, imgcodecs, imgproc};
+use opencv::{
+    core::{self, Size},
+    highgui, imgcodecs,
+    imgproc::{self, contour_area},
+};
 
 // Detects fingers in an image for multitoch applications
 fn main() {
@@ -22,17 +25,17 @@ fn main() {
 
     image = prepare_image(&image, &background);
 
-    detect_fingers(&image);
+    let ellipse_image = detect_fingers(&image);
 
-    highgui::imshow("result", &image).unwrap();
+    highgui::imshow("result", &ellipse_image).unwrap();
     highgui::wait_key(0).unwrap();
     highgui::destroy_all_windows().unwrap();
 }
 
 // Detects the contours of the fingers in the image
-fn detect_fingers(image: &core::Mat) {
+fn detect_fingers(image: &core::Mat) -> core::Mat {
     let mut contours = core::Vector::<core::Vector<core::Point>>::new();
-    let mut hierarchy = core::Mat::default();
+    let mut hierarchy = core::Vector::<core::Vec4i>::new();
     imgproc::find_contours_with_hierarchy_def(
         &image,
         &mut contours,
@@ -42,13 +45,45 @@ fn detect_fingers(image: &core::Mat) {
     )
     .unwrap();
 
-    let hierarchy_size: i32 = hierarchy.dims();
-    if hierarchy_size <= 0 {
-        println!("No contours found");
-        return;
+    let mut empty_img = image.clone();
+
+    if hierarchy.is_empty() {
+        panic!("No contours found");
     }
 
-    println!("{:?}", hierarchy);
+    let mut idx: i32 = 0;
+    while idx >= 0 {
+        let con = contours.get(idx.try_into().unwrap()).unwrap();
+
+        if contour_area(&con, false).unwrap() > 30.00 && con.len() > 4 {
+            println!("Finger detected");
+
+            let fit_ellipse = imgproc::fit_ellipse(&con).unwrap();
+
+            let center_32 =
+                core::Point::new(fit_ellipse.center.x as i32, fit_ellipse.center.y as i32);
+            let size_i32 = core::Size::new(
+                fit_ellipse.size.width as i32,
+                fit_ellipse.size.height as i32,
+            );
+
+            imgproc::ellipse(
+                &mut empty_img,
+                center_32,
+                size_i32,
+                fit_ellipse.angle.into(),
+                0.0,
+                360.0,
+                core::Scalar::new(255.0, 0.0, 0.0, 0.0),
+                1,
+                8,
+                0,
+            )
+            .unwrap();
+        }
+        idx = hierarchy.get(idx.try_into().unwrap()).unwrap()[0];
+    }
+    empty_img
 }
 
 // Prepare image for finger contour detection
