@@ -10,9 +10,19 @@ use opencv::{
 
 #[derive(Debug, Clone)]
 struct Finger {
-    id: i32,
+    id: Option<u32>,
     history: Vec<(i32, i32)>,
-    active: i32, // 0 newest, 9 oldest
+    active: u32, // 0 newest, 9 oldest
+}
+
+impl Finger {
+    fn new(id: Option<u32>, history: Vec<(i32, i32)>, active: u32) -> Self {
+        Self {
+            id,
+            history,
+            active,
+        }
+    }
 }
 
 // Detects fingers in an image for multitoch applications
@@ -83,7 +93,7 @@ fn video(video_path: &str, background: &core::Mat) {
                     // println!("Finger ID: {:?} Location: {:?}", finger.id, finger_location);
                     let _ = imgproc::put_text(
                         &mut final_image,
-                        &finger.id.to_string(),
+                        &finger.id.unwrap().to_string(),
                         core::Point::new(finger_location.0, finger_location.1),
                         imgproc::FONT_HERSHEY_PLAIN,
                         1.0,
@@ -111,13 +121,8 @@ fn video(video_path: &str, background: &core::Mat) {
 fn manage_fingers(fingers: &mut Vec<Finger>, finger_coordinates: &Vec<(i32, i32)>) {
     // No Existing fingers
     if fingers.is_empty() {
-        for (i, finger) in finger_coordinates.iter().enumerate() {
-            let mut new_finger = Finger {
-                id: i as i32,
-                history: Vec::new(),
-                active: 0,
-            };
-            new_finger.history.push(*finger);
+        for (i, finger_coordinate) in finger_coordinates.iter().enumerate() {
+            let new_finger = Finger::new(Some(i as u32), vec![*finger_coordinate], 0);
             fingers.push(new_finger);
         }
         return;
@@ -126,13 +131,8 @@ fn manage_fingers(fingers: &mut Vec<Finger>, finger_coordinates: &Vec<(i32, i32)
     // Existing fingers
     for finger_coordinate in finger_coordinates {
         let nearest_finger = find_nearest_fingers(*finger_coordinate, fingers.clone(), 250);
-        if nearest_finger.id == -1 {
-            let mut new_finger = Finger {
-                id: fingers.len() as i32,
-                history: Vec::new(),
-                active: 0,
-            };
-            new_finger.history.push(*finger_coordinate);
+        if nearest_finger.id.is_none() {
+            let new_finger = Finger::new(Some(fingers.len() as u32), vec![*finger_coordinate], 0);
             fingers.push(new_finger);
         } else {
             let nearest_finger = fingers
@@ -146,6 +146,7 @@ fn manage_fingers(fingers: &mut Vec<Finger>, finger_coordinates: &Vec<(i32, i32)
 
     //Inactive fingers
     let mut temp_fingers: Vec<Finger> = Vec::new(); // to avoid borrowing error
+
     fingers.iter_mut().for_each(|finger| {
         if finger.active < 10 {
             finger.active += 1;
@@ -320,11 +321,7 @@ fn find_nearest_fingers(
     distance_to_finger_threshold: i32,
 ) -> Finger {
     let mut current_min_distance = 999999; // arbitrary large number
-    let mut nearest_finger = Finger {
-        id: -1,
-        history: Vec::new(),
-        active: -1,
-    };
+    let mut nearest_finger = Finger::new(None, Vec::new(), 0);
 
     for finger in fingers {
         let finger_location = finger.history.last().unwrap();
