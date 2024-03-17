@@ -8,6 +8,13 @@ use opencv::{
     videoio::{self, VideoCaptureTraitConst},
 };
 
+#[derive(Debug, Clone)]
+struct Finger {
+    id: i32,
+    history: Vec<(i32, i32)>,
+    active: i32, // 0 newst, 4 oldest
+}
+
 // Detects fingers in an image for multitoch applications
 fn main() {
     let project_root = project_root::get_project_root().expect("Failed to get project root");
@@ -39,6 +46,8 @@ fn video(video_path: &str, background: &core::Mat) {
     let mut gray_background = background.clone();
     imgproc::cvt_color_def(&background, &mut gray_background, imgproc::COLOR_BGR2GRAY).unwrap();
 
+    let mut fingers: Vec<Finger> = Vec::new();
+
     highgui::named_window("multi-touch", highgui::WINDOW_NORMAL).unwrap();
     highgui::resize_window("multi-touch", 720, 480).unwrap();
 
@@ -60,8 +69,12 @@ fn video(video_path: &str, background: &core::Mat) {
             let temp_image = image.clone();
             imgproc::cvt_color_def(&temp_image, &mut image, imgproc::COLOR_BGR2GRAY).unwrap();
 
+            let mut finger_coordinates: Vec<(i32, i32)> = Vec::new();
             image = prepare_image(&image, &gray_background);
-            let ellipse_image = detect_fingers(&image, &frame);
+            let ellipse_image = detect_fingers(&image, &frame, &mut finger_coordinates);
+            // println!("\n \nFinger coordinates: {:?}", finger_coordinates);
+
+            manage_fingers(&mut fingers, &finger_coordinates);
 
             image = ellipse_image;
             // End of my code
@@ -77,8 +90,57 @@ fn video(video_path: &str, background: &core::Mat) {
     }
 }
 
+fn manage_fingers(fingers: &mut Vec<Finger>, finger_coordinates: &Vec<(i32, i32)>) {
+    // No Existing fingers
+    if fingers.is_empty() {
+        for (i, finger) in finger_coordinates.iter().enumerate() {
+            let mut new_finger = Finger {
+                id: i as i32,
+                history: Vec::new(),
+                active: 0,
+            };
+            new_finger.history.push(*finger);
+            fingers.push(new_finger);
+        }
+        return;
+    }
+
+    // Existing fingers
+    for finger_coordinate in finger_coordinates {
+        let nearest_finger = find_nearest_fingers(*finger_coordinate, fingers.clone(), 100);
+        if nearest_finger.id == -1 {
+            let mut new_finger = Finger {
+                id: fingers.len() as i32,
+                history: Vec::new(),
+                active: 0,
+            };
+            new_finger.history.push(*finger_coordinate);
+            fingers.push(new_finger);
+        } else {
+            let nearest_finger = fingers
+                .iter_mut()
+                .find(|finger| finger.id == nearest_finger.id)
+                .unwrap();
+            nearest_finger.history.push(*finger_coordinate);
+        }
+    }
+
+    //Inactive fingers
+    fingers.clone().iter_mut().for_each(|finger| {
+        if finger.active < 4 {
+            finger.active += 1;
+        } else {
+            fingers.retain(|f| f.id != finger.id);
+        }
+    });
+}
+
 // Detects the contours of the fingers in the image
-fn detect_fingers(image: &core::Mat, original_frame: &core::Mat) -> core::Mat {
+fn detect_fingers(
+    image: &core::Mat,
+    original_frame: &core::Mat,
+    finger_coordinates: &mut Vec<(i32, i32)>,
+) -> core::Mat {
     let mut contours = core::Vector::<core::Vector<core::Point>>::new();
     let mut hierarchy = core::Vector::<core::Vec4i>::new();
     imgproc::find_contours_with_hierarchy_def(
@@ -121,6 +183,8 @@ fn detect_fingers(image: &core::Mat, original_frame: &core::Mat) -> core::Mat {
                 // println!("Ellipse too big / small");
                 continue;
             }
+
+            finger_coordinates.push((center_32.x, center_32.y));
 
             imgproc::ellipse(
                 &mut temp_original_frame,
@@ -228,4 +292,30 @@ fn prepare_image(image: &core::Mat, background: &core::Mat) -> core::Mat {
     .unwrap();
 
     img_blur3
+}
+
+fn find_nearest_fingers(
+    finger_coordinates: (i32, i32),
+    fingers: Vec<Finger>,
+    distance_to_finger_threshold: i32,
+) -> Finger {
+    let mut current_min_distance = 999999; // arbitrary large number
+    let mut nearest_finger = Finger {
+        id: -1,
+        history: Vec::new(),
+        active: -1,
+    };
+
+    for finger in fingers {
+        let finger_location = finger.history.last().unwrap();
+
+        let distance = (finger_coordinates.0 - finger_location.0).pow(2)
+            + (finger_coordinates.1 - finger_location.1).pow(2);
+
+        if distance < current_min_distance && distance < distance_to_finger_threshold {
+            current_min_distance = distance;
+            nearest_finger = finger.clone();
+        }
+    }
+    nearest_finger
 }
