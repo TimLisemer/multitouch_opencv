@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 opencv = "0.88.8"
 project-root = "0.2.2"
+tuio-rs = "0.2.0"

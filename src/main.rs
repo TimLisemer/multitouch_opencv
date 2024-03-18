@@ -1,4 +1,6 @@
 extern crate opencv;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use tuio_rs::{Server};
 
 use opencv::{
     core::{self, Size},
@@ -7,6 +9,12 @@ use opencv::{
     prelude::VideoCaptureTrait,
     videoio::{self, VideoCaptureTraitConst},
 };
+
+#[derive(Debug)]
+struct IdToCursor {
+    id: u32,
+    cursor: i32,
+}
 
 #[derive(Debug, Clone)]
 struct Finger {
@@ -37,13 +45,58 @@ fn main() {
         imgcodecs::imread(image1_path.to_str().expect("Invalid image1 path"), 1).unwrap();
     // let image: core::Mat = imgcodecs::imread(image2_path.to_str().expect("Invalid image2 path"), 1).unwrap();
 
+    let mut server = tuio();
+    let ids_to_cursors: &mut Vec<IdToCursor> = &mut Vec::new();
+
     video(
         video_path.to_str().expect("Invalid video path"),
         &background,
+        ids_to_cursors,
+        &mut server,
     );
 }
 
-fn video(video_path: &str, background: &core::Mat) {
+fn tuio () -> Server{
+
+    let server_name = "server_name";
+    let mut server =
+        Server::from_socket_addr(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 9988)).unwrap();
+    server.set_source_name(server_name);
+
+    println!("[SERVER] Starting TUIO server: {}", server_name);
+
+    return server;
+}
+
+fn tuio_new_finger (finger: Finger, server: &mut Server, ids_to_cursors: &mut Vec<IdToCursor>) {
+    // Send new finger to TUIO server
+    server.init_frame();
+    let cursor: i32 = server.create_cursor(finger.history.last().unwrap().0 as f32, finger.history.last().unwrap().1 as f32);
+    server.commit_frame();
+
+    let id_to_cursor = IdToCursor { id: finger.id.unwrap(), cursor };
+    ids_to_cursors.push(id_to_cursor);
+}
+
+fn tuio_update_finger (finger: Finger, server: &mut Server, ids_to_cursors: &mut Vec<IdToCursor>) {
+    let cursor: i32 = ids_to_cursors.iter().find(|id_to_cursor| id_to_cursor.id == finger.id.unwrap()).unwrap().cursor;
+
+    // Send updated finger to TUIO server
+    server.init_frame();
+    server.update_cursor(cursor, finger.history.last().unwrap().0 as f32, finger.history.last().unwrap().1 as f32);
+    server.commit_frame();
+}
+
+fn tuio_remove_finger (finger_id: u32, server: &mut Server, ids_to_cursors: &mut Vec<IdToCursor>) {
+    let cursor: i32 = ids_to_cursors.iter().find(|id_to_cursor| id_to_cursor.id == finger_id).unwrap().cursor;
+
+    // Send removed finger to TUIO server
+    server.init_frame();
+    server.remove_cursor(cursor);
+    server.commit_frame();
+}
+
+fn video(video_path: &str, background: &core::Mat, ids_to_cursors: &mut Vec<IdToCursor>, server: &mut Server) {
     let mut cap = videoio::VideoCapture::from_file(video_path, videoio::CAP_ANY).unwrap();
 
     let mut frame_counter = 0;
@@ -66,6 +119,8 @@ fn video(video_path: &str, background: &core::Mat) {
         if frame_counter == total_frames {
             frame_counter = 0;
             cap.set(videoio::CAP_PROP_POS_FRAMES, 0.0).unwrap();
+            ids_to_cursors.clear();
+            fingers.clear();
         }
 
         let mut frame = core::Mat::default();
@@ -84,7 +139,7 @@ fn video(video_path: &str, background: &core::Mat) {
             let ellipse_image = detect_fingers(&image, &frame, &mut finger_coordinates);
             // println!("\n \nFinger coordinates: {:?}", finger_coordinates);
 
-            manage_fingers(&mut fingers, &finger_coordinates);
+            manage_fingers(&mut fingers, &finger_coordinates, ids_to_cursors, server);
             // Print Active Fingers with ID and Location
             let mut final_image = ellipse_image.clone();
             for finger in fingers.clone() {
@@ -118,12 +173,13 @@ fn video(video_path: &str, background: &core::Mat) {
     }
 }
 
-fn manage_fingers(fingers: &mut Vec<Finger>, finger_coordinates: &Vec<(i32, i32)>) {
+fn manage_fingers(fingers: &mut Vec<Finger>, finger_coordinates: &Vec<(i32, i32)>,ids_to_cursors: &mut Vec<IdToCursor>, server: &mut Server) {
     // No Existing fingers
     if fingers.is_empty() {
         for (i, finger_coordinate) in finger_coordinates.iter().enumerate() {
             let new_finger = Finger::new(Some(i as u32), vec![*finger_coordinate], 0);
-            fingers.push(new_finger);
+            fingers.push(new_finger.clone());
+            tuio_new_finger(new_finger.clone(), server, ids_to_cursors);
         }
         return;
     }
@@ -132,8 +188,9 @@ fn manage_fingers(fingers: &mut Vec<Finger>, finger_coordinates: &Vec<(i32, i32)
     for finger_coordinate in finger_coordinates {
         let nearest_finger = find_nearest_fingers(*finger_coordinate, fingers.clone(), 250);
         if nearest_finger.id.is_none() {
-            let new_finger = Finger::new(Some(fingers.len() as u32), vec![*finger_coordinate], 0);
-            fingers.push(new_finger);
+            let new_finger = Finger::new(Some(ids_to_cursors.len() as u32), vec![*finger_coordinate], 0);
+            fingers.push(new_finger.clone());
+            tuio_new_finger(new_finger.clone(), server, ids_to_cursors);
         } else {
             let nearest_finger = fingers
                 .iter_mut()
@@ -141,6 +198,7 @@ fn manage_fingers(fingers: &mut Vec<Finger>, finger_coordinates: &Vec<(i32, i32)
                 .unwrap();
             nearest_finger.history.push(*finger_coordinate);
             nearest_finger.active = 0;
+            tuio_update_finger(nearest_finger.clone(), server, ids_to_cursors);
         }
     }
 
@@ -151,6 +209,8 @@ fn manage_fingers(fingers: &mut Vec<Finger>, finger_coordinates: &Vec<(i32, i32)
         if finger.active < 10 {
             finger.active += 1;
             temp_fingers.push(finger.clone());
+        } else {
+            tuio_remove_finger(finger.id.unwrap(), server, ids_to_cursors);
         }
     });
     *fingers = temp_fingers;
